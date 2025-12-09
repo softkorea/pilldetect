@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pill Detection (iOS Final)</title>
+    <title>Pill Detection (iOS Final Fix)</title>
     <style>
         body { display: flex; flex-direction: column; align-items: center; font-family: sans-serif; margin: 0; padding: 20px; box-sizing: border-box;}
         
@@ -11,34 +11,17 @@
             position: relative; 
             width: 100%; 
             max-width: 640px; 
-            /* 화면 비율 유지 */
             min-height: 480px; 
             background: #eee;
             margin-top: 10px;
         }
         
-        /* 캔버스는 위에 떠 있어야 함 (z-index: 2) */
         canvas { 
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%; 
-            height: 100%;
-            z-index: 2; 
-            object-fit: contain;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; object-fit: contain;
         }
         
-        /* 비디오는 캔버스 바로 뒤에 실제 크기로 존재해야 함 (z-index: 1) */
-        /* opacity: 0으로 설정하면 아이폰이 렌더링을 안 할 수 있어 0.01로 설정 */
         video { 
-            position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%;
-            z-index: 1;
-            opacity: 0.01; 
-            object-fit: cover;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; opacity: 0.01; object-fit: cover;
         }
 
         .controls { margin-top: 20px; z-index: 3; position: relative;}
@@ -46,21 +29,14 @@
         button:disabled { color: #ccc; }
         
         #log { 
-            margin-top: 20px; 
-            width: 100%; 
-            height: 120px; 
-            border: 1px solid #333; 
-            overflow-y: scroll; 
-            font-size: 11px; 
-            background: #f9f9f9; 
-            padding: 5px;
-            font-family: monospace;
+            margin-top: 20px; width: 100%; height: 120px; border: 1px solid #333; 
+            overflow-y: scroll; font-size: 11px; background: #f9f9f9; padding: 5px; font-family: monospace;
         }
     </style>
 </head>
 <body>
 
-    <h3>Pill Counter (iOS Final)</h3>
+    <h3>Pill Counter (iOS Final Fix)</h3>
     <div id="status">Wait for OpenCV...</div>
     
     <div class="container">
@@ -85,6 +61,7 @@
         let cap = null;
         let src = null;
         let lastFrameTime = 0;
+        let waitCount = 0;
 
         function log(msg) {
             const logDiv = document.getElementById('log');
@@ -131,12 +108,12 @@
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
                 
-                // 아이폰은 play()가 Promise임
+                // 아이폰용 플레이
                 await video.play();
                 
                 log(`Video Playing. Size: ${video.videoWidth}x${video.videoHeight}`);
 
-                // 캔버스와 비디오 크기 동기화 (CSS가 아닌 속성값)
+                // 사이즈 동기화
                 video.width = video.videoWidth;
                 video.height = video.videoHeight;
                 canvas.width = video.videoWidth;
@@ -171,7 +148,6 @@
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
-            
             if (src) { src.delete(); src = null; }
             cap = null;
 
@@ -184,34 +160,40 @@
             if (!streaming) return;
 
             try {
-                // [핵심] 비디오 데이터가 충분하지 않으면 읽지 않고 대기
-                if (video.readyState !== 4) { // HAVE_ENOUGH_DATA = 4
-                    // 아직 준비 안됨, 다음 프레임 요청
+                // [핵심 수정] ReadyState 조건 완화 (4 -> 2)
+                // 0: HAVE_NOTHING, 1: HAVE_METADATA, 2: HAVE_CURRENT_DATA
+                if (video.readyState < 2) { 
+                    // 대기 중인지 확인하기 위해 60프레임마다 로그 출력
+                    if (waitCount % 60 === 0) {
+                        log(`Waiting for data... State: ${video.readyState}`);
+                    }
+                    waitCount++;
                     requestAnimationFrame(processVideo);
                     return;
                 }
 
-                // 리사이징 대응
+                // 사이즈 변경 대응
                 if (video.videoWidth !== src.cols || video.videoHeight !== src.rows) {
-                    log(`Resize detected: ${video.videoWidth}x${video.videoHeight}`);
-                    src.delete();
-                    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-                    video.width = video.videoWidth;
-                    video.height = video.videoHeight;
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
+                    if (video.videoWidth > 0 && video.videoHeight > 0) {
+                        log(`Resize: ${video.videoWidth}x${video.videoHeight}`);
+                        src.delete();
+                        src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                        video.width = video.videoWidth;
+                        video.height = video.videoHeight;
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                    }
                 }
 
-                cap.read(src); // 여기서 에러나면 catch로 이동
+                cap.read(src); 
 
                 // --- 처리 로직 ---
                 let dst = new cv.Mat();
+                // 아래 함수에서 에러가 나면 catch로 잡힘
                 let count = detectPills(src, dst);
 
-                // 결과 그리기
                 cv.imshow('canvasOutput', dst);
                 
-                // 텍스트 오버레이
                 ctx.font = "bold 40px Arial";
                 ctx.fillStyle = "red";
                 ctx.strokeStyle = "white";
@@ -222,16 +204,18 @@
                 dst.delete();
                 // ----------------
 
-                // 첫 프레임 성공 시 로그 (한 번만)
                 if (lastFrameTime === 0) {
-                    log("First Frame Rendered Success!");
+                    log("First Frame Processed!");
                     lastFrameTime = Date.now();
                 }
 
             } catch (err) {
-                // 치명적이지 않은 에러는 로그만 찍고 계속 시도
                 console.error(err);
-                // log("Loop Err: " + err); // 로그창이 너무 빨라지므로 주석처리
+                // 에러 발생 시 반복 로그 방지를 위해 가끔만 출력
+                if (waitCount % 60 === 0) {
+                    log("Loop Err: " + err);
+                }
+                waitCount++;
             }
 
             requestAnimationFrame(processVideo);
@@ -244,22 +228,20 @@
             let contours = new cv.MatVector();
             let hierarchy = new cv.MatVector();
 
-            // 1. 전처리 (Gray -> Blur -> Otsu)
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
             cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+            
+            // 임계값 조정: Otsu 대신 고정값으로 테스트 (조명 문제 배제)하거나 Otsu 유지
             cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
-            // 2. 형태학적 연산 (노이즈 제거)
             let M = cv.Mat.ones(3, 3, cv.CV_8U);
             cv.morphologyEx(binary, binary, cv.MORPH_OPEN, M);
 
-            // 3. 윤곽선 검출
             cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-            // 4. 그리기
             src.copyTo(dst);
             let count = 0;
-            const minArea = 1000; // 면적 기준
+            const minArea = 500; 
 
             for (let i = 0; i < contours.size(); ++i) {
                 let contour = contours.get(i);
@@ -271,7 +253,6 @@
                 }
             }
 
-            // 메모리 정리
             gray.delete(); blurred.delete(); binary.delete();
             contours.delete(); hierarchy.delete(); M.delete();
 
