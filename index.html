@@ -18,7 +18,7 @@
     <div class="status" id="status">OpenCV Loading...</div>
     
     <div class="container">
-        <video id="videoInput" width="640" height="480"></video>
+        <video id="videoInput" width="640" height="480" playsinline webkit-playsinline muted></video>
         <canvas id="canvasOutput" width="640" height="480"></canvas>
     </div>
 
@@ -56,7 +56,15 @@
             if (streaming) return;
 
             try {
-                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                // facingMode: 'environment' 가 후면 카메라를 의미합니다.
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 640 },
+                        height: { ideal: 480 }
+                    }, 
+                    audio: false 
+                });
                 video.srcObject = stream;
                 video.play();
                 
