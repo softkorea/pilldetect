@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pill Detection (iOS Final Fix)</title>
+    <title>Pill Detection (iOS Final v2)</title>
     <style>
         body { display: flex; flex-direction: column; align-items: center; font-family: sans-serif; margin: 0; padding: 20px; box-sizing: border-box;}
         
@@ -36,7 +36,7 @@
 </head>
 <body>
 
-    <h3>Pill Counter (iOS Final Fix)</h3>
+    <h3>Pill Counter (iOS Final v2)</h3>
     <div id="status">Wait for OpenCV...</div>
     
     <div class="container">
@@ -108,12 +108,10 @@
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
                 
-                // 아이폰용 플레이
                 await video.play();
                 
                 log(`Video Playing. Size: ${video.videoWidth}x${video.videoHeight}`);
 
-                // 사이즈 동기화
                 video.width = video.videoWidth;
                 video.height = video.videoHeight;
                 canvas.width = video.videoWidth;
@@ -160,10 +158,7 @@
             if (!streaming) return;
 
             try {
-                // [핵심 수정] ReadyState 조건 완화 (4 -> 2)
-                // 0: HAVE_NOTHING, 1: HAVE_METADATA, 2: HAVE_CURRENT_DATA
                 if (video.readyState < 2) { 
-                    // 대기 중인지 확인하기 위해 60프레임마다 로그 출력
                     if (waitCount % 60 === 0) {
                         log(`Waiting for data... State: ${video.readyState}`);
                     }
@@ -172,7 +167,6 @@
                     return;
                 }
 
-                // 사이즈 변경 대응
                 if (video.videoWidth !== src.cols || video.videoHeight !== src.rows) {
                     if (video.videoWidth > 0 && video.videoHeight > 0) {
                         log(`Resize: ${video.videoWidth}x${video.videoHeight}`);
@@ -187,9 +181,7 @@
 
                 cap.read(src); 
 
-                // --- 처리 로직 ---
                 let dst = new cv.Mat();
-                // 아래 함수에서 에러가 나면 catch로 잡힘
                 let count = detectPills(src, dst);
 
                 cv.imshow('canvasOutput', dst);
@@ -202,7 +194,6 @@
                 ctx.fillText(`Count: ${count}`, 20, 60);
 
                 dst.delete();
-                // ----------------
 
                 if (lastFrameTime === 0) {
                     log("First Frame Processed!");
@@ -211,7 +202,6 @@
 
             } catch (err) {
                 console.error(err);
-                // 에러 발생 시 반복 로그 방지를 위해 가끔만 출력
                 if (waitCount % 60 === 0) {
                     log("Loop Err: " + err);
                 }
@@ -221,38 +211,45 @@
             requestAnimationFrame(processVideo);
         }
 
+        // [중요 수정] detectPills 함수 내부
         function detectPills(src, dst) {
             let gray = new cv.Mat();
             let blurred = new cv.Mat();
             let binary = new cv.Mat();
             let contours = new cv.MatVector();
-            let hierarchy = new cv.MatVector();
+            
+            // [Fix] 기존 MatVector() -> Mat()으로 변경
+            let hierarchy = new cv.Mat(); 
 
+            // 1. 전처리
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
             cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-            
-            // 임계값 조정: Otsu 대신 고정값으로 테스트 (조명 문제 배제)하거나 Otsu 유지
             cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
 
+            // 2. 형태학적 연산
             let M = cv.Mat.ones(3, 3, cv.CV_8U);
             cv.morphologyEx(binary, binary, cv.MORPH_OPEN, M);
 
+            // 3. 윤곽선 검출
             cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
+            // 4. 그리기
             src.copyTo(dst);
             let count = 0;
-            const minArea = 500; 
+            const minArea = 1000; 
 
             for (let i = 0; i < contours.size(); ++i) {
                 let contour = contours.get(i);
                 let area = cv.contourArea(contour);
 
                 if (area > minArea) {
+                    // hierarchy 타입이 Mat으로 맞춰져서 에러 해결됨
                     cv.drawContours(dst, contours, i, new cv.Scalar(0, 255, 0, 255), 3, cv.LINE_8, hierarchy, 0);
                     count++;
                 }
             }
 
+            // 메모리 해제
             gray.delete(); blurred.delete(); binary.delete();
             contours.delete(); hierarchy.delete(); M.delete();
 
