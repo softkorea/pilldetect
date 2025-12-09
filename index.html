@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pill Detection (ROI & Otsu)</title>
+    <title>Pill Counter (Top-Hat & Slider)</title>
     <style>
         body { 
             display: flex; flex-direction: column; align-items: center; 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            margin: 0; padding: 20px; box-sizing: border-box; background: #222; color: #eee;
+            margin: 0; padding: 10px; box-sizing: border-box; background: #222; color: #eee;
             touch-action: manipulation;
         }
-        h3 { margin: 10px 0; color: #fff; }
-        #status { font-size: 14px; color: #ccc; margin-bottom: 10px; height: 20px; }
+        h3 { margin: 5px 0; color: #fff; font-size: 18px; }
+        #status { font-size: 13px; color: #ccc; margin-bottom: 5px; height: 18px; }
         
         .container { 
             position: relative; 
@@ -22,36 +22,39 @@
             border-radius: 12px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
         
-        canvas { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
-            object-fit: cover;
-        }
-        #videoInput { display: none; } /* 비디오 태그는 숨김 (OpenCV 처리용) */
+        canvas { width: 100%; height: 100%; object-fit: cover; }
+        #videoInput { display: none; }
 
-        .controls { margin-top: 20px; z-index: 3; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-        button { 
-            padding: 12px 24px; font-size: 16px; font-weight: 600;
-            cursor: pointer; border-radius: 8px; border: none; 
-            background: #0a84ff; color: white; transition: background 0.2s;
+        /* 슬라이더 컨트롤 UI */
+        .controls-area {
+            width: 100%; max-width: 640px; margin-top: 15px;
+            background: #333; padding: 15px; border-radius: 12px;
         }
-        button:disabled { background: #555; color: #888; cursor: not-allowed; }
+
+        .slider-container {
+            display: flex; flex-direction: column; gap: 8px; margin-bottom: 15px;
+        }
+        .slider-header { display: flex; justify-content: space-between; font-weight: bold; font-size: 14px; }
+        input[type=range] { width: 100%; height: 25px; accent-color: #0a84ff; }
+        .tip { font-size: 12px; color: #aaa; }
+
+        .btn-group { display: flex; gap: 10px; }
+        button { 
+            flex: 1; padding: 12px; font-size: 16px; font-weight: 600;
+            cursor: pointer; border-radius: 8px; border: none; 
+            background: #0a84ff; color: white;
+        }
+        button:disabled { background: #555; color: #888; }
         button#stopBtn { background: #ff453a; }
         button#stopBtn:disabled { background: #555; }
 
-        .options { margin-top: 15px; display: flex; gap: 15px; align-items: center; }
-        label { cursor: pointer; user-select: none; font-size: 14px; }
-
-        #log { 
-            margin-top: 20px; width: 100%; max-width: 640px; height: 100px; 
-            border: 1px solid #444; border-radius: 8px;
-            overflow-y: scroll; font-size: 11px; background: #333; 
-            padding: 8px; font-family: monospace; color: #ccc;
-        }
+        .options { margin-top: 10px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+        input[type=checkbox] { width: 18px; height: 18px; }
     </style>
 </head>
 <body>
 
-    <h3>알약 카운터 (포장지 대응)</h3>
+    <h3>알약 정밀 카운터 (비닐 제거용)</h3>
     <div id="status">OpenCV 로딩 중...</div>
     
     <div class="container">
@@ -59,16 +62,26 @@
         <canvas id="canvasOutput"></canvas>
     </div>
 
-    <div class="controls">
-        <button id="startBtn" disabled>카메라 시작</button>
-        <button id="stopBtn" disabled>중지</button>
-    </div>
+    <div class="controls-area">
+        <div class="slider-container">
+            <div class="slider-header">
+                <span>알약 감지 감도 (Threshold)</span>
+                <span id="threshVal">100</span>
+            </div>
+            <input type="range" id="threshSlider" min="20" max="200" value="100" step="5">
+            <div class="tip">* 슬라이더를 움직여서 비닐을 지우고 알약만 남기세요.</div>
+        </div>
 
-    <div class="options">
-        <label><input type="checkbox" id="debugCheck"> 이진화 화면 보기 (디버그)</label>
-    </div>
+        <div class="btn-group">
+            <button id="startBtn" disabled>카메라 시작</button>
+            <button id="stopBtn" disabled>중지</button>
+        </div>
 
-    <div id="log">로그 시작...<br></div>
+        <div class="options">
+            <input type="checkbox" id="debugCheck" checked>
+            <label for="debugCheck">이진화 화면 보기 (설정용)</label>
+        </div>
+    </div>
 
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()" type="text/javascript"></script>
 
@@ -79,21 +92,15 @@
         let cv = null;
         let cap = null;
         
-        // 메모리 효율을 위해 전역 변수로 선언
-        let src = null;
-        let dst = null;
-        let gray = null, blurred = null, binary = null;
+        // 메모리 관리를 위한 전역 변수
+        let src = null, dst = null;
+        let gray = null, tophat = null, binary = null;
         let hierarchy = null, contours = null;
-
-        function log(msg) {
-            const logDiv = document.getElementById('log');
-            logDiv.innerHTML = `> ${msg}<br>` + logDiv.innerHTML.substring(0, 1000);
-        }
+        let kernel = null;
 
         function onOpenCvReady() {
             cv = window.cv;
-            document.getElementById('status').innerText = '준비 완료. 카메라를 시작하세요.';
-            log("OpenCV 로드됨");
+            document.getElementById('status').innerText = '준비 완료.';
             initElements();
             document.getElementById('startBtn').disabled = false;
         }
@@ -102,6 +109,11 @@
             video = document.getElementById('videoInput');
             canvasOutput = document.getElementById('canvasOutput');
             ctxOutput = canvasOutput.getContext('2d');
+            
+            // 슬라이더 값 표시
+            const slider = document.getElementById('threshSlider');
+            const valDisplay = document.getElementById('threshVal');
+            slider.oninput = function() { valDisplay.innerText = this.value; }
 
             document.getElementById('startBtn').onclick = startCamera;
             document.getElementById('stopBtn').onclick = stopCamera;
@@ -127,25 +139,27 @@
                 canvasOutput.width = video.videoWidth;
                 canvasOutput.height = video.videoHeight;
 
-                // OpenCV 객체 초기화
                 cap = new cv.VideoCapture(video);
                 src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
                 dst = new cv.Mat(video.height, video.width, cv.CV_8UC4);
                 gray = new cv.Mat();
-                blurred = new cv.Mat();
+                tophat = new cv.Mat();
                 binary = new cv.Mat();
                 hierarchy = new cv.Mat();
                 contours = new cv.MatVector();
+                
+                // Top-Hat용 커널: 알약 크기보다 약간 커야 합니다 (지름 30px 설정)
+                // 이 크기보다 넓게 퍼진 빛(비닐)은 배경으로 인식해 삭제합니다.
+                kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(30, 30));
 
                 streaming = true;
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
-                document.getElementById('status').innerText = '초록 박스 안에 알약을 놓으세요.';
+                document.getElementById('status').innerText = '슬라이더를 조절해 알약만 남기세요.';
                 
                 requestAnimationFrame(processVideo);
             } catch (err) {
-                log("에러: " + err.message);
-                alert("카메라 시작 실패");
+                alert("카메라 시작 에러: " + err.message);
             }
         }
 
@@ -158,8 +172,8 @@
             
             // 메모리 해제
             if(src) src.delete(); if(dst) dst.delete();
-            if(gray) gray.delete(); if(blurred) blurred.delete();
-            if(binary) binary.delete();
+            if(gray) gray.delete(); if(tophat) tophat.delete();
+            if(binary) binary.delete(); if(kernel) kernel.delete();
             if(hierarchy) hierarchy.delete(); if(contours) contours.delete();
 
             document.getElementById('startBtn').disabled = false;
@@ -174,37 +188,33 @@
             try {
                 cap.read(src);
 
-                // 1. ROI 설정 (화면 중앙 50% 영역만 사용)
-                // 배경 잡동사니 제거를 위해 중앙만 잘라냅니다.
+                // 1. ROI 설정 (화면 중앙 50% 영역)
                 let roiX = Math.floor(src.cols * 0.25);
                 let roiY = Math.floor(src.rows * 0.25);
                 let roiW = Math.floor(src.cols * 0.5);
                 let roiH = Math.floor(src.rows * 0.5);
                 let rect = new cv.Rect(roiX, roiY, roiW, roiH);
-                
-                // ROI 잘라내기 (이미지 복사가 아닌 참조 생성)
                 let srcRoi = src.roi(rect);
-                
-                // 2. 전처리
+
+                // 2. 그레이스케일 변환
                 cv.cvtColor(srcRoi, gray, cv.COLOR_RGBA2GRAY);
-                // 노이즈(비닐 주름) 제거를 위해 블러를 약간 강하게 줌
-                cv.GaussianBlur(gray, blurred, new cv.Size(7, 7), 0);
 
-                // 3. 이진화 (Otsu 알고리즘)
-                // Adaptive 대신 Otsu를 사용하여 배경과 알약을 자동으로 가장 잘 나누는 값을 찾습니다.
-                cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+                // 3. [핵심] Top-Hat 변환
+                // "원본" - "열기(Opening)연산결과" = "작고 밝은 것(알약)"만 남음
+                // 넓은 영역(비닐)은 Opening 연산에서 살아남아 원본과 비슷해지므로, 빼면 사라짐(검은색 0이 됨).
+                cv.morphologyEx(gray, tophat, cv.MORPH_TOPHAT, kernel);
 
-                // 4. 형태학적 연산 (구멍 메우기)
-                let kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
-                // 팽창(Dilate)으로 알약 내부의 검은 반사광 구멍을 메움
-                cv.morphologyEx(binary, binary, cv.MORPH_DILATE, kernel);
-                cv.morphologyEx(binary, binary, cv.MORPH_CLOSE, kernel);
+                // 4. 이진화 (Threshold)
+                // 슬라이더 값으로 조절. Top-Hat 결과는 배경이 아주 어둡기 때문에
+                // 적절한 값을 주면 알약만 하얗게 뜹니다.
+                let threshValue = parseInt(document.getElementById('threshSlider').value);
+                cv.threshold(tophat, binary, threshValue, 255, cv.THRESH_BINARY);
 
                 // 5. 윤곽선 검출
                 cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-                // 6. 그리기 및 필터링
-                src.copyTo(dst); // 원본 복사
+                // 6. 결과 그리기
+                src.copyTo(dst);
                 let count = 0;
                 let isDebug = document.getElementById('debugCheck').checked;
 
@@ -212,38 +222,37 @@
                     let contour = contours.get(i);
                     let area = cv.contourArea(contour);
 
-                    // 면적 필터 (ROI 내부 기준이므로 픽셀 수가 작을 수 있음)
-                    if (area > 300 && area < 8000) {
+                    // 면적 필터
+                    if (area > 100 && area < 5000) {
+                        // 1) 비율 검사
                         let boundingRect = cv.boundingRect(contour);
                         let aspectRatio = boundingRect.width / boundingRect.height;
                         
-                        // Solidity (단단함/채움 비율) 체크 [핵심]
-                        // 알약은 매끈한 타원형이므로 Solidity가 높습니다 (1에 가까움).
-                        // 찌그러진 비닐 반사광은 모양이 불규칙하여 Solidity가 낮습니다.
+                        // 2) Solidity(단단함) 검사: 찌그러진 비닐 조각 제외
                         let hull = new cv.Mat();
                         cv.convexHull(contour, hull, false, true);
                         let hullArea = cv.contourArea(hull);
                         let solidity = area / hullArea;
                         hull.delete();
 
-                        // 필터 조건: 비율(0.5~2.0) 그리고 Solidity(0.85 이상)
+                        // 필터 조건: 비율이 적당하고(0.5~2.0), 모양이 단단한(0.85 이상) 것만
                         if (aspectRatio >= 0.5 && aspectRatio <= 2.0 && solidity > 0.85) {
-                            // ROI 좌표를 원본 좌표로 변환하여 박스 그리기
+                            // ROI 좌표를 전체 좌표로 변환
                             let p1 = new cv.Point(rect.x + boundingRect.x, rect.y + boundingRect.y);
                             let p2 = new cv.Point(p1.x + boundingRect.width, p1.y + boundingRect.height);
+                            
+                            // 감지된 알약 박스 그리기
                             cv.rectangle(dst, p1, p2, [0, 255, 0, 255], 3);
                             count++;
                         }
                     }
                 }
 
-                // 7. 결과 화면 표시
-                // ROI 가이드 박스 (파란색) - 여기에 맞춰달라고 표시
+                // ROI 가이드 박스
                 cv.rectangle(dst, new cv.Point(roiX, roiY), new cv.Point(roiX + roiW, roiY + roiH), [255, 255, 0, 255], 2);
 
+                // 디버그 모드: ROI 영역에 'Top-Hat 후 이진화된 화면' 덮어씌우기
                 if (isDebug) {
-                    // 디버그 모드: 처리된 흑백 이미지를 ROI 영역에 덮어씌워 보여줌
-                    // 이를 통해 비닐 반사가 어떻게 보이는지 확인 가능
                     let dstRoi = dst.roi(rect);
                     cv.cvtColor(binary, dstRoi, cv.COLOR_GRAY2RGBA);
                     dstRoi.delete();
@@ -260,8 +269,7 @@
                 ctxOutput.strokeText(msg, 30, 60);
                 ctxOutput.fillText(msg, 30, 60);
 
-                // 메모리 정리 (ROI 객체 해제)
-                srcRoi.delete(); kernel.delete();
+                srcRoi.delete();
 
             } catch (err) {
                 console.error(err);
