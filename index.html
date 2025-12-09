@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Client Side Pill Detection</title>
+    <style>
+        body { display: flex; flex-direction: column; align-items: center; font-family: sans-serif; }
+        .container { position: relative; margin-top: 20px; }
+        /* 비디오는 숨기고 캔버스만 보여줍니다 */
+        video { display: none; }
+        canvas { border: 1px solid #ccc; background-color: #f0f0f0; }
+        .controls { margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>Real-time Pill Counter</h2>
+    <div class="status" id="status">OpenCV Loading...</div>
+    
+    <div class="container">
+        <video id="videoInput" width="640" height="480"></video>
+        <canvas id="canvasOutput" width="640" height="480"></canvas>
+    </div>
+
+    <div class="controls">
+        <button id="startBtn" disabled>Start Camera</button>
+        <button id="stopBtn" disabled>Stop</button>
+    </div>
+
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()" type="text/javascript"></script>
+
+    <script type="text/javascript">
+        let video, canvas, ctx;
+        let streaming = false;
+        let stream = null;
+        let cv = null; // OpenCV 객체
+
+        // OpenCV 로드 완료 시 호출
+        function onOpenCvReady() {
+            cv = window.cv; // 전역 객체 할당
+            document.getElementById('status').innerText = 'OpenCV Ready';
+            document.getElementById('startBtn').disabled = false;
+            initElements();
+        }
+
+        function initElements() {
+            video = document.getElementById('videoInput');
+            canvas = document.getElementById('canvasOutput');
+            ctx = canvas.getContext('2d');
+
+            document.getElementById('startBtn').onclick = startCamera;
+            document.getElementById('stopBtn').onclick = stopCamera;
+        }
+
+        async function startCamera() {
+            if (streaming) return;
+
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                video.srcObject = stream;
+                video.play();
+                
+                streaming = true;
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                // 비디오 재생이 시작되면 처리 루프 실행
+                requestAnimationFrame(processVideo);
+            } catch (err) {
+                console.error("Error accessing webcam:", err);
+                alert("웹캠을 열 수 없습니다.");
+            }
+        }
+
+        function stopCamera() {
+            if (!streaming) return;
+
+            video.pause();
+            video.srcObject = null;
+            stream.getTracks().forEach(track => track.stop());
+            
+            streaming = false;
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            
+            // 캔버스 초기화
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // 메인 처리 루프
+        function processVideo() {
+            if (!streaming) return;
+
+            // 1. 초기 Mat 생성 (비디오 프레임 캡처)
+            let src = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+            let cap = new cv.VideoCapture(video);
+            cap.read(src);
+
+            // 2. 알약 감지 로직 수행
+            let dst = new cv.Mat();
+            let count = detectPills(src, dst);
+
+            // 3. 결과 렌더링
+            cv.imshow('canvasOutput', dst);
+            
+            // 4. 카운트 표시 (Canvas 위에 덧그리기)
+            ctx.font = "24px Arial";
+            ctx.fillStyle = "red";
+            ctx.fillText(`Count: ${count}`, 10, 30);
+
+            // 5. 메모리 해제 (매 프레임마다 필수)
+            src.delete();
+            dst.delete();
+            // cap 객체는 루프 밖에서 관리하거나 필요시 생성/해제. 
+            // 여기서는 JS 래퍼 객체라 명시적 delete 없어도 되나, 안전하게 관리 필요.
+            
+            // 다음 프레임 요청
+            requestAnimationFrame(processVideo);
+        }
+
+        // 순수 감지 알고리즘 (Side Effect 최소화)
+        function detectPills(src, dst) {
+            let gray = new cv.Mat();
+            let blurred = new cv.Mat();
+            let binary = new cv.Mat();
+            let contours = new cv.MatVector();
+            let hierarchy = new cv.MatVector();
+
+            // 전처리: Gray -> Blur -> Threshold
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+            cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+            // 형태학적 연산 (노이즈 제거)
+            let M = cv.Mat.ones(3, 3, cv.CV_8U);
+            cv.morphologyEx(binary, binary, cv.MORPH_OPEN, M);
+
+            // 윤곽선 검출
+            cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+            // 결과 그리기 위해 원본 복사
+            src.copyTo(dst);
+            
+            let count = 0;
+            const minArea = 500; // 환경에 맞게 조정 필요
+
+            for (let i = 0; i < contours.size(); ++i) {
+                let contour = contours.get(i);
+                let area = cv.contourArea(contour);
+
+                if (area > minArea) {
+                    // 녹색으로 윤곽선 그리기
+                    cv.drawContours(dst, contours, i, new cv.Scalar(0, 255, 0, 255), 2, cv.LINE_8, hierarchy, 0);
+                    count++;
+                }
+            }
+
+            // 내부 메모리 해제
+            gray.delete(); blurred.delete(); binary.delete();
+            contours.delete(); hierarchy.delete(); M.delete();
+
+            return count;
+        }
+    </script>
+</body>
+</html>
