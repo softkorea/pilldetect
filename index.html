@@ -2,42 +2,59 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pill Detection (iOS Final v2)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pill Detection in Bag (Final)</title>
     <style>
-        body { display: flex; flex-direction: column; align-items: center; font-family: sans-serif; margin: 0; padding: 20px; box-sizing: border-box;}
+        body { 
+            display: flex; flex-direction: column; align-items: center; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0; padding: 20px; box-sizing: border-box; background: #f0f2f5;
+            touch-action: manipulation; /* 더블탭 줌 방지 */
+        }
         
+        h3 { margin: 10px 0; color: #333; }
+        #status { font-size: 14px; color: #666; margin-bottom: 10px; height: 20px; }
+
         .container { 
             position: relative; 
-            width: 100%; 
-            max-width: 640px; 
-            min-height: 480px; 
-            background: #eee;
-            margin-top: 10px;
+            width: 100%; max-width: 640px; 
+            aspect-ratio: 3 / 4; /* 아이폰 비율에 맞춤 */
+            background: #000; /* 비디오 로딩 전 검은 배경 */
+            border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         
         canvas { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; object-fit: contain;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            z-index: 2; object-fit: cover;
         }
         
         video { 
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; opacity: 0.01; object-fit: cover;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            z-index: 1; opacity: 0.01; object-fit: cover;
         }
 
-        .controls { margin-top: 20px; z-index: 3; position: relative;}
-        button { padding: 12px 24px; font-size: 16px; cursor: pointer; border-radius: 8px; border: 1px solid #ccc; background: white;}
-        button:disabled { color: #ccc; }
+        .controls { margin-top: 20px; z-index: 3; display: flex; gap: 10px; }
+        button { 
+            padding: 12px 24px; font-size: 16px; font-weight: 600;
+            cursor: pointer; border-radius: 8px; border: none; 
+            background: #007aff; color: white; transition: background 0.2s;
+        }
+        button:disabled { background: #ccc; color: #666; cursor: not-allowed; }
+        button#stopBtn { background: #ff3b30; }
+        button#stopBtn:disabled { background: #ccc; }
         
         #log { 
-            margin-top: 20px; width: 100%; height: 120px; border: 1px solid #333; 
-            overflow-y: scroll; font-size: 11px; background: #f9f9f9; padding: 5px; font-family: monospace;
+            margin-top: 20px; width: 100%; max-width: 640px; height: 100px; 
+            border: 1px solid #ddd; border-radius: 8px;
+            overflow-y: scroll; font-size: 11px; background: #fff; 
+            padding: 8px; font-family: monospace; color: #333;
         }
     </style>
 </head>
 <body>
 
-    <h3>Pill Counter (iOS Final v2)</h3>
-    <div id="status">Wait for OpenCV...</div>
+    <h3>알약 카운터 (포장지 대응)</h3>
+    <div id="status">OpenCV 로딩 중...</div>
     
     <div class="container">
         <video id="videoInput" playsinline webkit-playsinline muted></video>
@@ -45,11 +62,11 @@
     </div>
 
     <div class="controls">
-        <button id="startBtn" disabled>Start Camera</button>
-        <button id="stopBtn" disabled>Stop</button>
+        <button id="startBtn" disabled>카메라 시작</button>
+        <button id="stopBtn" disabled>중지</button>
     </div>
 
-    <div id="log">Log started...<br></div>
+    <div id="log">로그 시작...<br></div>
 
     <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()" type="text/javascript"></script>
 
@@ -60,21 +77,19 @@
         let cv = null;
         let cap = null;
         let src = null;
-        let lastFrameTime = 0;
         let waitCount = 0;
 
         function log(msg) {
             const logDiv = document.getElementById('log');
             logDiv.innerHTML += `> ${msg}<br>`;
             logDiv.scrollTop = logDiv.scrollHeight;
-            console.log(msg);
         }
 
         function onOpenCvReady() {
             if (cv && cv.Mat) return;
             cv = window.cv;
-            document.getElementById('status').innerText = 'OpenCV Ready';
-            log("OpenCV Loaded");
+            document.getElementById('status').innerText = 'OpenCV 준비 완료';
+            log("OpenCV 라이브러리 로드됨");
             
             setTimeout(() => {
                 initElements();
@@ -93,7 +108,8 @@
 
         async function startCamera() {
             if (streaming) return;
-            log("Requesting Camera...");
+            log("카메라 요청 중...");
+            document.getElementById('status').innerText = '카메라 연결 중...';
 
             try {
                 const constraints = {
@@ -110,7 +126,7 @@
                 
                 await video.play();
                 
-                log(`Video Playing. Size: ${video.videoWidth}x${video.videoHeight}`);
+                log(`비디오 재생 시작. 해상도: ${video.videoWidth}x${video.videoHeight}`);
 
                 video.width = video.videoWidth;
                 video.height = video.videoHeight;
@@ -126,19 +142,21 @@
                 streaming = true;
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
+                document.getElementById('status').innerText = '감지 중...';
                 
-                log("Starting Process Loop...");
+                log("처리 루프 시작...");
                 requestAnimationFrame(processVideo);
 
             } catch (err) {
-                log("Error: " + err.message);
-                alert("Error: " + err.message);
+                log("에러: " + err.message);
+                alert("카메라 접근 실패: " + err.message);
+                document.getElementById('status').innerText = '에러 발생';
             }
         }
 
         function stopCamera() {
             if (!streaming) return;
-            log("Stopping...");
+            log("중지 중...");
 
             streaming = false;
             video.pause();
@@ -151,6 +169,7 @@
 
             document.getElementById('startBtn').disabled = false;
             document.getElementById('stopBtn').disabled = true;
+            document.getElementById('status').innerText = '중지됨';
             ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
 
@@ -159,99 +178,112 @@
 
             try {
                 if (video.readyState < 2) { 
-                    if (waitCount % 60 === 0) {
-                        log(`Waiting for data... State: ${video.readyState}`);
-                    }
+                    if (waitCount % 30 === 0) log(`데이터 대기 중... 상태: ${video.readyState}`);
                     waitCount++;
                     requestAnimationFrame(processVideo);
                     return;
                 }
 
-                if (video.videoWidth !== src.cols || video.videoHeight !== src.rows) {
-                    if (video.videoWidth > 0 && video.videoHeight > 0) {
-                        log(`Resize: ${video.videoWidth}x${video.videoHeight}`);
-                        src.delete();
-                        src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
-                        video.width = video.videoWidth;
-                        video.height = video.videoHeight;
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                    }
+                if (video.videoWidth > 0 && video.videoHeight > 0 && (video.videoWidth !== src.cols || video.videoHeight !== src.rows)) {
+                    log(`해상도 변경 감지: ${video.videoWidth}x${video.videoHeight}`);
+                    src.delete();
+                    src = new cv.Mat(video.videoHeight, video.videoWidth, cv.CV_8UC4);
+                    video.width = video.videoWidth;
+                    video.height = video.videoHeight;
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
                 }
 
                 cap.read(src); 
 
                 let dst = new cv.Mat();
-                let count = detectPills(src, dst);
+                let count = detectPillsInBag(src, dst);
 
                 cv.imshow('canvasOutput', dst);
                 
-                ctx.font = "bold 40px Arial";
-                ctx.fillStyle = "red";
-                ctx.strokeStyle = "white";
-                ctx.lineWidth = 2;
-                ctx.strokeText(`Count: ${count}`, 20, 60);
-                ctx.fillText(`Count: ${count}`, 20, 60);
+                // 결과 텍스트 그리기 (가독성 위해 외곽선 추가)
+                ctx.font = "bold 40px sans-serif";
+                ctx.strokeStyle = "black";
+                ctx.lineWidth = 4;
+                ctx.strokeText(`개수: ${count}`, 20, 60);
+                ctx.fillStyle = "#00ff00";
+                ctx.fillText(`개수: ${count}`, 20, 60);
 
                 dst.delete();
 
-                if (lastFrameTime === 0) {
-                    log("First Frame Processed!");
-                    lastFrameTime = Date.now();
-                }
-
             } catch (err) {
                 console.error(err);
-                if (waitCount % 60 === 0) {
-                    log("Loop Err: " + err);
-                }
+                if (waitCount % 60 === 0) log("루프 에러: " + err);
                 waitCount++;
             }
 
             requestAnimationFrame(processVideo);
         }
 
-        // [중요 수정] detectPills 함수 내부
-        function detectPills(src, dst) {
+        // [핵심] 포장지 내 알약 감지 알고리즘
+        function detectPillsInBag(src, dst) {
             let gray = new cv.Mat();
             let blurred = new cv.Mat();
             let binary = new cv.Mat();
             let contours = new cv.MatVector();
-            
-            // [Fix] 기존 MatVector() -> Mat()으로 변경
+            // [수정됨] 에러의 원인이었던 부분. MatVector가 아닌 Mat이어야 합니다.
             let hierarchy = new cv.Mat(); 
 
-            // 1. 전처리
+            // 1. 전처리: 그레이스케일 + 강한 블러 (노이즈/반사 감소)
             cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-            cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+            cv.GaussianBlur(gray, blurred, new cv.Size(7, 7), 0);
 
-            // 2. 형태학적 연산
-            let M = cv.Mat.ones(3, 3, cv.CV_8U);
-            cv.morphologyEx(binary, binary, cv.MORPH_OPEN, M);
+            // 2. 이진화: 적응형 임계값 (Adaptive Threshold) 사용
+            // 빛 반사가 심한 비닐 포장지에서는 고정값보다 주변 밝기에 따라 변하는 이 방식이 유리합니다.
+            // Block Size(15)와 C(3) 값은 환경에 따라 튜닝이 필요할 수 있습니다.
+            // 알약이 밝은 색이므로 THRESH_BINARY를 사용하여 밝은 부분을 흰색으로 만듭니다.
+            cv.adaptiveThreshold(blurred, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 3);
 
-            // 3. 윤곽선 검출
+            // 3. 형태학적 연산: 노이즈 제거 및 형태 다듬기
+            // 타원형 커널을 사용하여 알약 모양을 유지하며 노이즈 제거
+            let kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(5, 5));
+            // 침식(Erode)으로 작은 노이즈(글자 조각, 반사광 점) 제거
+            cv.morphologyEx(binary, binary, cv.MORPH_ERODE, kernel);
+            // 팽창(Dilate)으로 줄어든 알약 크기 복원 및 내부 구멍 메우기
+            cv.morphologyEx(binary, binary, cv.MORPH_DILATE, kernel);
+
+            // 4. 윤곽선 검출
             cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-            // 4. 그리기
+            // 5. 필터링 및 그리기
             src.copyTo(dst);
             let count = 0;
-            const minArea = 1000; 
+            
+            // 필터링 기준값 (환경에 맞춰 조정 필요)
+            const minArea = 300;  // 너무 작은 조각 무시
+            const maxArea = 5000; // 너무 큰 덩어리(빛 반사 뭉침 등) 무시
+            const minRatio = 0.6; // 최소 가로세로 비율 (타원 허용)
+            const maxRatio = 1.6; // 최대 가로세로 비율
 
             for (let i = 0; i < contours.size(); ++i) {
                 let contour = contours.get(i);
                 let area = cv.contourArea(contour);
 
-                if (area > minArea) {
-                    // hierarchy 타입이 Mat으로 맞춰져서 에러 해결됨
-                    cv.drawContours(dst, contours, i, new cv.Scalar(0, 255, 0, 255), 3, cv.LINE_8, hierarchy, 0);
-                    count++;
+                if (area > minArea && area < maxArea) {
+                    // 외접 사각형을 구해서 가로/세로 비율 확인
+                    let rect = cv.boundingRect(contour);
+                    let aspectRatio = rect.width / rect.height;
+
+                    // 비율이 1에 가까울수록 원형. 타원형 알약을 위해 범위를 넓게 잡음.
+                    if (aspectRatio >= minRatio && aspectRatio <= maxRatio) {
+                        // 감지된 알약에 녹색 사각형 그리기
+                        let color = new cv.Scalar(0, 255, 0, 255);
+                        let point1 = new cv.Point(rect.x, rect.y);
+                        let point2 = new cv.Point(rect.x + rect.width, rect.y + rect.height);
+                        cv.rectangle(dst, point1, point2, color, 3, cv.LINE_AA, 0);
+                        count++;
+                    }
                 }
             }
 
-            // 메모리 해제
+            // 메모리 해제 (필수)
             gray.delete(); blurred.delete(); binary.delete();
-            contours.delete(); hierarchy.delete(); M.delete();
+            contours.delete(); hierarchy.delete(); kernel.delete();
 
             return count;
         }
